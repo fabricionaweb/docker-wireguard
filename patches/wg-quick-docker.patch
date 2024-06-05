@@ -1,0 +1,59 @@
+https://lists.zx2c4.com/pipermail/wireguard/2023-February/007936.html
+
+Currently, wg-quick script on linux attempts to set the sysctl
+"net.ipv4.conf.all.src_valid_mark=1" every time, no matter if it's
+already set or not.
+
+The issue is, when the script is run inside a container lacking the
+privilege for setting sysctls, it fails with a warning message. In
+such cases, like a docker container, the user is expected to set the
+sysctl via docker arguments when creating the container so the sysctl
+is already set correctly. There is no need for wg-quick to set it
+inside the container as it's already set. The warning in such cases is
+a false positive and is confusing to the user as it leads them to
+believe the sysctl is not set correctly.
+
+One example is the linuxserver wireguard docker image:
+https://github.com/linuxserver/docker-wireguard
+The container is meant to be created with the docker argument
+'--sysctl="net.ipv4.conf.all.src_valid_mark=1"' so there is no need
+for wg-quick to set it inside the container. It tries anyway and fails
+with a warning as listed below. Since the sysctl is already set
+correctly, everything works as expected.
+
+[#] ip link add wg0 type wireguard
+[#] wg setconf wg0 /dev/fd/63
+[#] ip -4 address add 10.1.13.12/32 dev wg0
+[#] ip link set mtu 1420 up dev wg0
+[#] wg set wg0 fwmark 51820
+[#] ip -4 route add 0.0.0.0/0 dev wg0 table 51820
+[#] ip -4 rule add not fwmark 51820 table 51820
+[#] ip -4 rule add table main suppress_prefixlength 0
+[#] sysctl -q net.ipv4.conf.all.src_valid_mark=1
+sysctl: setting key "net.ipv4.conf.all.src_valid_mark", ignoring:
+Read-only file system
+[#] iptables-restore -n
+[#] iptables -t nat -A POSTROUTING -o wg+ -j MASQUERADE
+
+Here's a patch that makes the sysctl setting attempt to be
+conditional. It first checks whether it's already set correctly, and
+only attempts to set it if necessary.
+
+Signed-off-by: aptalca <aptalca at linuxserver.io>
+---
+ src/wg-quick/linux.bash | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/wg-quick/linux.bash b/src/wg-quick/linux.bash
+index e4d4c4f..04c1008 100755
+--- a/src/wg-quick/linux.bash
++++ b/src/wg-quick/linux.bash
+@@ -237,7 +237,7 @@ add_default() {
+ 	printf -v restore '%sCOMMIT\n*mangle\n-I POSTROUTING -m mark --mark %d -p udp -j CONNMARK --save-mark %s\n-I PREROUTING -p udp -j CONNMARK --restore-mark %s\nCOMMIT\n' "$restore" $table "$marker" "$marker"
+ 	printf -v nftcmd '%sadd rule %s %s postmangle meta l4proto udp mark %d ct mark set mark \n' "$nftcmd" "$pf" "$nftable" $table
+ 	printf -v nftcmd '%sadd rule %s %s premangle meta l4proto udp meta mark set ct mark \n' "$nftcmd" "$pf" "$nftable"
+-	[[ $proto == -4 ]] && cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1
++	[[ $proto == -4 ]] && [[ $(sysctl -n net.ipv4.conf.all.src_valid_mark) != 1 ]] && cmd sysctl -q net.ipv4.conf.all.src_valid_mark=1
+ 	if type -p nft >/dev/null; then
+ 		cmd nft -f <(echo -n "$nftcmd")
+ 	else

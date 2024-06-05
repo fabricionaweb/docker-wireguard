@@ -1,0 +1,7 @@
+#!/usr/bin/with-contenv sh
+
+# change chdir
+cd /config
+
+# run
+exec wg-quick down ./$WG_FILE
