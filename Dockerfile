@@ -36,7 +36,7 @@ RUN make && \
 FROM base
 
 ENV S6_VERBOSITY=0 S6_BEHAVIOUR_IF_STAGE2_FAILS=2
-ENV WG_FILE=wg0.conf
+ENV ENV="/root/.profile" WG_FILE=wg0.conf
 WORKDIR /config
 VOLUME /config
 EXPOSE 51820/udp
